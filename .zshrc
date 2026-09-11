@@ -25,10 +25,10 @@ plugins=(
 source $ZSH/oh-my-zsh.sh
 
 # Custom aliases
-alias update="sudo dnf update -y && flatpak update -y"
-
-alias vpnUp='sudo wg-quick up /etc/wireguard/ideapad.conf'
-alias vpnDown='sudo wg-quick down /etc/wireguard/ideapad.conf'
+alias update="sudo zypper up -y && sudo flatpak update -y && omz update"
+alias bt-reconnect='bluetoothctl disconnect DD:B0:B8:04:3A:8F 2>/dev/null; sleep 1; bluetoothctl connect DD:B0:B8:04:3A:8F'
+alias vpnUp='sudo wg-quick up ~/ideapad.conf'
+alias vpnDown='sudo wg-quick down ~/ideapad.conf'
 
 alias ll="ls -la"
 alias gs="git status"
@@ -73,3 +73,7 @@ export EDITOR="nano"
 export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="$PATH:/usr/local/go/bin"
 export PATH="$HOME/.local/bin:$PATH"
+
+if [[ -z "$ZELLIJ" ]]; then
+    exec /home/alexf/.cargo/bin/zellij
+fi
