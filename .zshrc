@@ -27,8 +27,9 @@ source $ZSH/oh-my-zsh.sh
 # Custom aliases
 alias update="sudo zypper up -y && sudo flatpak update -y && omz update"
 alias bt-reconnect='bluetoothctl disconnect DD:B0:B8:04:3A:8F 2>/dev/null; sleep 1; bluetoothctl connect DD:B0:B8:04:3A:8F'
-alias vpnUp='sudo wg-quick up ~/ideapad.conf'
-alias vpnDown='sudo wg-quick down ~/ideapad.conf'
+alias vpnUp='sudo wg-quick up /etc/wireguard/tumbleweed.conf'
+alias vpnDown='sudo wg-quick down /etc/wireguard/tumbleweed.conf'
+alias autoremove="sudo zypper packages --unneeded | awk -F'|' 'NR>4 && $1 ~ /^i/ {print $3}' | xargs -r sudo zypper remove --clean-deps -y"
 
 alias ll="ls -la"
 alias gs="git status"

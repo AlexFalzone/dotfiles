@@ -1,6 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Persistent log: $BASE/update.log
+# Failure notifications: handled by systemd (docker-update.service OnFailure).
 
 set -uo pipefail
 
@@ -15,33 +16,16 @@ SERVICES=(
     "opencloud/opencloud-compose"
     "mealie"
     "vaultwarden"
+    "wger"
+    "openwebui"
     #"ryot"
-    # "n8n"
+    # "n8n"    # not active
 )
 
 FAILED=()
 
-SECRETS_FILE="$BASE/.secrets"
-
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"
-}
-
-if [[ -f "$SECRETS_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$SECRETS_FILE"
-else
-    log "WARNING: $SECRETS_FILE not found - Telegram notifications disabled"
-fi
-
-notify_telegram() {
-    local msg="$1"
-    if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-        return
-    fi
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d chat_id="${TELEGRAM_CHAT_ID}" \
-        -d text="${msg}" >/dev/null
 }
 
 update_service() {
@@ -73,10 +57,8 @@ docker image prune -f 2>&1 | tee -a "$LOG"
 
 if [[ ${#FAILED[@]} -gt 0 ]]; then
     log "Services with errors: ${FAILED[*]}"
-    notify_telegram "⚠ update.sh (Storage VM): errors on: ${FAILED[*]}"
     exit 1
 fi
 
 log "All services updated successfully."
-notify_telegram "✅ Update (Storage VM): all stacks updated successfully"
 exit 0

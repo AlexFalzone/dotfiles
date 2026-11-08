@@ -43,7 +43,8 @@ export RESTIC_REPOSITORY="rclone:drive:/backup/config"
 export RESTIC_PASSWORD_FILE="/root/.restic-config-pass"
 export RCLONE_CONFIG="${HOME_DIR}/.config/rclone/rclone.conf"
 
-STAGING="/tmp/backup-staging-$(date +%s)"
+# Private (0700) random dir: staging holds DB dumps and Vaultwarden data.
+STAGING="$(mktemp -d /tmp/backup-staging.XXXXXXXX)"
 
 # Retention policy
 KEEP_DAILY=5
@@ -67,6 +68,7 @@ OPENCLOUD_COMPOSE_DIR="${HOME_DIR}/opencloud/opencloud-compose"
 OPENCLOUD_RUNTIME_CONFIG="/opt/opencloud/config"
 OPENCLOUD_RADICALE_DATA="/opt/opencloud/radicale"
 
+NAVIDROME_CONTAINER="navidrome-navidrome-1"
 NAVIDROME_DATA="/opt/navidrome_data"
 
 MEALIE_COMPOSE_DIR="${HOME_DIR}/mealie"
@@ -75,15 +77,24 @@ MEALIE_DATA="/opt/mealie_data"
 NPM_DATA="${HOME_DIR}/nginx/data"
 NPM_LETSENCRYPT="${HOME_DIR}/nginx/letsencrypt"
 
+WGER_COMPOSE_DIR="${HOME_DIR}/wger"
+WGER_DB_CONTAINER="wger-db-1"
+WGER_DB_USER="wger"
+
+OPENWEBUI_COMPOSE_DIR="${HOME_DIR}/openwebui"
+OPENWEBUI_DATA="/opt/openwebui_data"
+
 SECRETS_FILE="${HOME_DIR}/.secrets"
-if [[ -f "$SECRETS_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$SECRETS_FILE"
-else
+# Parsed, not sourced: this script runs as root and the file is user-owned.
+secret() {
+    [[ -r "$SECRETS_FILE" ]] || return 0
+    sed -n "s/^$1=//p" "$SECRETS_FILE" | tail -n1 | tr -d "\"'"
+}
+if [[ ! -f "$SECRETS_FILE" ]]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $SECRETS_FILE not found - Telegram notifications disabled"
 fi
-TG_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
-TG_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+TG_BOT_TOKEN="$(secret TELEGRAM_BOT_TOKEN)"
+TG_CHAT_ID="$(secret TELEGRAM_CHAT_ID)"
 
 # ==============================================================================
 # --------------------------- FUNCTIONS ---------------------------------------
@@ -94,9 +105,11 @@ notify() {
     # Best-effort Telegram notification.
     local msg="$1"
     if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
-        curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT_ID}" \
-            -d text="${msg}" >/dev/null 2>&1 || true
+        # URL passed via stdin so the token does not show up in the process list.
+        printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TG_BOT_TOKEN" |
+            curl -s -K - \
+                -d chat_id="${TG_CHAT_ID}" \
+                --data-urlencode text="${msg}" >/dev/null 2>&1 || true
     fi
 }
 
@@ -161,6 +174,34 @@ dump_mealie() {
     find "${STAGING}/mealie/data" -maxdepth 2 -name '*.db*' -delete 2>/dev/null || true
 }
 
+dump_wger() {
+    log "Dumping wger database (Postgres)..."
+    if docker ps --format '{{.Names}}' | grep -q "^${WGER_DB_CONTAINER}$"; then
+        mkdir -p "${STAGING}/wger"
+        docker exec "$WGER_DB_CONTAINER" \
+            pg_dumpall --clean --username "$WGER_DB_USER" \
+            > "${STAGING}/wger/wger-db.sql"
+        log "  -> wger-db.sql created ($(du -h "${STAGING}/wger/wger-db.sql" | cut -f1))"
+    else
+        log "  WARNING: ${WGER_DB_CONTAINER} not running, skipping DB dump."
+    fi
+}
+
+dump_openwebui() {
+    # Chat history, users and settings live in webui.db (SQLite).
+    # vector_db/ and cache/ are rebuildable, so they are not backed up.
+    log "Dumping Open WebUI database (SQLite)..."
+    if [[ -f "${OPENWEBUI_DATA}/webui.db" ]]; then
+        mkdir -p "${STAGING}/openwebui"
+        sqlite3 "${OPENWEBUI_DATA}/webui.db" \
+            ".backup '${STAGING}/openwebui/webui.db'"
+        log "  -> webui.db (consistent backup) created"
+    else
+        log "  WARNING: ${OPENWEBUI_DATA}/webui.db not found, skipping DB dump."
+    fi
+    collect "${OPENWEBUI_DATA}/uploads" "openwebui"
+}
+
 collect() {
     local src="$1" dest="$2"
     if [[ -e "$src" ]]; then
@@ -210,6 +251,15 @@ dump_navidrome
 collect "${MEALIE_COMPOSE_DIR}/docker-compose.yml" "mealie"
 collect "${MEALIE_COMPOSE_DIR}/.env"               "mealie"
 dump_mealie
+
+# wger
+collect "${WGER_COMPOSE_DIR}/config/prod.env"             "wger/config"
+collect "${WGER_COMPOSE_DIR}/docker-compose.override.yml" "wger"
+dump_wger
+
+# Open WebUI
+collect "${OPENWEBUI_COMPOSE_DIR}/docker-compose.yml" "openwebui"
+dump_openwebui
 
 # Nginx
 collect "${NPM_DATA}"        "npm"
